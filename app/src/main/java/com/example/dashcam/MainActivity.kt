@@ -198,6 +198,7 @@ class MainActivity : AppCompatActivity() {
             window.attributes = window.attributes.also { it.screenBrightness = if (dim) 0.01f else -1f }
             ui()
         }
+        btn { if (running) stopAll(); startActivity(android.content.Intent(this, GalleryActivity::class.java)) }.text = "Thư viện"
         root.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(root)
         ui()

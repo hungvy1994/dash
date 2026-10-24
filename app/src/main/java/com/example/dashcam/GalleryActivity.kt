@@ -28,9 +28,10 @@ class GalleryActivity : AppCompatActivity() {
     private lateinit var list: ListView
     private lateinit var video: VideoView
     private lateinit var title: TextView
-    private lateinit var bLock: Button
-    private lateinit var bSave: Button
-    private lateinit var bDel: Button
+    private lateinit var bLock: IconButton
+    private lateinit var capLock: TextView
+    private lateinit var bSave: IconButton
+    private lateinit var bDel: IconButton
     private var files = listOf<File>()
     private var sel: File? = null
     private val fmt = SimpleDateFormat("dd/MM HH:mm:ss", Locale.US)
@@ -56,13 +57,21 @@ class GalleryActivity : AppCompatActivity() {
         video = VideoView(this)
         video.setMediaController(MediaController(this).also { it.setAnchorView(video) })
         val bar = LinearLayout(this).apply { setBackgroundColor(dark); gravity = Gravity.CENTER }
-        fun btn(onClick: () -> Unit) = Button(this).apply {
-            setOnClickListener { onClick() }
-            bar.addView(this, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val dp = resources.displayMetrics.density
+        fun btn(type: String, caption: String, onClick: () -> Unit): Pair<IconButton, TextView> {
+            val b = IconButton(this, type).apply { contentDescription = caption; setOnClickListener { onClick() } }
+            val t = TextView(this).apply { text = caption; setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER }
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(0, 8, 0, 8)
+                addView(b, LinearLayout.LayoutParams((48 * dp).toInt(), (48 * dp).toInt()))
+                addView(t)
+            }
+            bar.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            return b to t
         }
-        bLock = btn { toggleLock() }
-        bSave = btn { sel?.let { export(it) } }.apply { text = "Lưu vào máy" }
-        bDel = btn { confirmDelete() }.apply { text = "Xóa" }
+        btn("lock", "Khóa") { toggleLock() }.let { bLock = it.first; capLock = it.second }
+        bSave = btn("save", "Lưu vào máy") { sel?.let { export(it) } }.first
+        bDel = btn("del", "Xóa") { confirmDelete() }.first
         right.addView(title)
         right.addView(video, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         right.addView(bar)
@@ -93,7 +102,9 @@ class GalleryActivity : AppCompatActivity() {
     private fun updateBar() {
         val f = sel
         title.text = f?.let { label(it) } ?: "Chọn một video ở danh sách bên trái"
-        bLock.text = if (f?.name?.startsWith("LOCK_") == true) "Mở khóa" else "Khóa"
+        val isLocked = f?.name?.startsWith("LOCK_") == true
+        capLock.text = if (isLocked) "Mở khóa" else "Khóa"
+        bLock.active = isLocked
         listOf(bLock, bSave, bDel).forEach { it.isEnabled = f != null }
     }
 

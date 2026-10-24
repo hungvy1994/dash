@@ -3,7 +3,9 @@ package com.example.dashcam
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -16,11 +18,13 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.util.Rational
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -71,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pvRear: PreviewView
     private lateinit var pvFront: PreviewView
     private lateinit var tvHud: TextView
+    private lateinit var barView: LinearLayout
     private lateinit var bRec: Button
     private lateinit var bMode: Button
     private lateinit var bH: Button
@@ -181,7 +186,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(row)
         tvHud = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f; setShadowLayer(4f, 0f, 1f, Color.BLACK); setPadding(24, 16, 24, 16) }
         root.addView(tvHud, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
-        val bar = LinearLayout(this).apply { setBackgroundColor(0x99000000.toInt()); gravity = Gravity.CENTER }
+        val bar = LinearLayout(this).apply { setBackgroundColor(0x99000000.toInt()); gravity = Gravity.CENTER }.also { barView = it }
         fun btn(onClick: () -> Unit) = Button(this).apply {
             setOnClickListener { onClick() }
             bar.addView(this, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -199,9 +204,30 @@ class MainActivity : AppCompatActivity() {
             ui()
         }
         btn { if (running) stopAll(); startActivity(android.content.Intent(this, GalleryActivity::class.java)) }.text = "Thư viện"
+        btn { enterPip() }.text = "Thu nhỏ"
         root.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(root)
         ui()
+    }
+
+    /* ---------- Thu nhỏ thành cửa sổ nổi để xem Maps, vẫn ghi bình thường ---------- */
+    private fun enterPip() {
+        if (Build.VERSION.SDK_INT < 26 || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            Toast.makeText(this, "Máy không hỗ trợ cửa sổ thu nhỏ. Hãy dùng chia đôi màn hình.", Toast.LENGTH_LONG).show()
+            return
+        }
+        enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+    }
+
+    override fun onUserLeaveHint() {
+        if (running && Build.VERSION.SDK_INT >= 26) enterPip()   // bấm Home khi đang ghi thì tự thu nhỏ
+        super.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        val v = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        barView.visibility = v; tvHud.visibility = v
     }
 
     private fun flip(k: String) {

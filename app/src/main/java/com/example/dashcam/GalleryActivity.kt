@@ -6,7 +6,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -28,9 +31,15 @@ class GalleryActivity : AppCompatActivity() {
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         val root = LinearLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        list = ListView(this).apply { setBackgroundColor(Color.WHITE) }
+        list = ListView(this).apply { setBackgroundColor(0xFF222222.toInt()) }
+        val empty = TextView(this).apply {
+            text = "Chưa có video nào.\nHãy bấm Ghi ở màn hình chính, ghi vài chục giây rồi quay lại."
+            setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(32, 32, 32, 32)
+        }
+        list.emptyView = empty
+        val left = FrameLayout(this).apply { setBackgroundColor(0xFF222222.toInt()); addView(list); addView(empty) }
         video = VideoView(this)
-        root.addView(list, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        root.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         root.addView(video, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f))
         setContentView(root)
         video.setMediaController(MediaController(this).also { it.setAnchorView(video) })
@@ -49,7 +58,6 @@ class GalleryActivity : AppCompatActivity() {
                 (if (it.name.contains("front_")) "Trước  " else "Sau  ") +
                 fmt.format(Date(it.lastModified())) + "   " + it.length() / 1048576 + " MB"
         })
-        if (files.isEmpty()) Toast.makeText(this, "Chưa có video nào", Toast.LENGTH_LONG).show()
     }
 
     private fun play(f: File) { video.setVideoPath(f.path); video.start() }

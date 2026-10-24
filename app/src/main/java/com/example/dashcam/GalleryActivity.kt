@@ -8,12 +8,13 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.ViewGroup
-import android.widget.FrameLayout
-import android.widget.TextView
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.MediaController
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AlertDialog
@@ -26,53 +27,89 @@ import java.util.Locale
 class GalleryActivity : AppCompatActivity() {
     private lateinit var list: ListView
     private lateinit var video: VideoView
+    private lateinit var title: TextView
+    private lateinit var bLock: Button
+    private lateinit var bSave: Button
+    private lateinit var bDel: Button
     private var files = listOf<File>()
+    private var sel: File? = null
+    private val fmt = SimpleDateFormat("dd/MM HH:mm:ss", Locale.US)
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
+        val dark = 0xFF222222.toInt()
         val root = LinearLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        list = ListView(this).apply { setBackgroundColor(0xFF222222.toInt()) }
+
+        // Bên trái: danh sách
+        list = ListView(this).apply { setBackgroundColor(dark); choiceMode = ListView.CHOICE_MODE_SINGLE }
         val empty = TextView(this).apply {
             text = "Chưa có video nào.\nHãy bấm Ghi ở màn hình chính, ghi vài chục giây rồi quay lại."
             setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(32, 32, 32, 32)
         }
         list.emptyView = empty
-        val left = FrameLayout(this).apply { setBackgroundColor(0xFF222222.toInt()); addView(list); addView(empty) }
-        video = VideoView(this)
+        val left = FrameLayout(this).apply { setBackgroundColor(dark); addView(list); addView(empty) }
         root.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        root.addView(video, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f))
-        setContentView(root)
+
+        // Bên phải: tên video, trình phát, hàng nút
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        title = TextView(this).apply { setTextColor(Color.WHITE); setPadding(24, 12, 24, 12) }
+        video = VideoView(this)
         video.setMediaController(MediaController(this).also { it.setAnchorView(video) })
-        list.setOnItemClickListener { _, _, i, _ -> play(files[i]) }
-        list.setOnItemLongClickListener { _, _, i, _ -> menu(files[i]); true }
+        val bar = LinearLayout(this).apply { setBackgroundColor(dark); gravity = Gravity.CENTER }
+        fun btn(onClick: () -> Unit) = Button(this).apply {
+            setOnClickListener { onClick() }
+            bar.addView(this, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        bLock = btn { toggleLock() }
+        bSave = btn { sel?.let { export(it) } }.apply { text = "Lưu vào máy" }
+        bDel = btn { confirmDelete() }.apply { text = "Xóa" }
+        right.addView(title)
+        right.addView(video, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        right.addView(bar)
+        root.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f))
+        setContentView(root)
+
+        list.setOnItemClickListener { _, _, i, _ -> sel = files[i]; play(files[i]); updateBar() }
         refresh()
     }
 
     private fun dir() = getExternalFilesDir(Environment.DIRECTORY_MOVIES)!!
 
+    private fun label(f: File) =
+        (if (f.name.startsWith("LOCK_")) "[KHÓA] " else "") +
+            (if (f.name.contains("front_")) "Trước  " else "Sau  ") +
+            fmt.format(Date(f.lastModified())) + "   " + f.length() / 1048576 + " MB"
+
     private fun refresh() {
         files = (dir().listFiles { f -> f.extension == "mp4" } ?: emptyArray()).sortedByDescending { it.lastModified() }
-        val fmt = SimpleDateFormat("dd/MM HH:mm:ss", Locale.US)
-        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map {
-            (if (it.name.startsWith("LOCK_")) "[KHÓA] " else "") +
-                (if (it.name.contains("front_")) "Trước  " else "Sau  ") +
-                fmt.format(Date(it.lastModified())) + "   " + it.length() / 1048576 + " MB"
-        })
+        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_single_choice, files.map { label(it) })
+        sel?.let { s ->
+            val i = files.indexOfFirst { it.name == s.name }
+            if (i >= 0) list.setItemChecked(i, true) else sel = null
+        }
+        updateBar()
+    }
+
+    private fun updateBar() {
+        val f = sel
+        title.text = f?.let { label(it) } ?: "Chọn một video ở danh sách bên trái"
+        bLock.text = if (f?.name?.startsWith("LOCK_") == true) "Mở khóa" else "Khóa"
+        listOf(bLock, bSave, bDel).forEach { it.isEnabled = f != null }
     }
 
     private fun play(f: File) { video.setVideoPath(f.path); video.start() }
 
-    private fun menu(f: File) {
-        val locked = f.name.startsWith("LOCK_")
-        AlertDialog.Builder(this).setItems(arrayOf("Xem", if (locked) "Mở khóa" else "Khóa", "Lưu vào Thư viện máy", "Xóa")) { _, w ->
-            when (w) {
-                0 -> play(f)
-                1 -> { f.renameTo(File(f.parentFile, if (locked) f.name.removePrefix("LOCK_") else "LOCK_" + f.name)); refresh() }
-                2 -> export(f)
-                3 -> AlertDialog.Builder(this).setMessage("Xóa video này?")
-                    .setPositiveButton("Xóa") { _, _ -> f.delete(); refresh() }.setNegativeButton("Hủy", null).show()
-            }
-        }.show()
+    private fun toggleLock() {
+        val f = sel ?: return
+        val n = File(f.parentFile, if (f.name.startsWith("LOCK_")) f.name.removePrefix("LOCK_") else "LOCK_" + f.name)
+        if (f.renameTo(n)) { sel = n; refresh() } else Toast.makeText(this, "Không đổi được trạng thái khóa", Toast.LENGTH_LONG).show()
+    }
+
+    private fun confirmDelete() {
+        val f = sel ?: return
+        AlertDialog.Builder(this).setMessage("Xóa video này?")
+            .setPositiveButton("Xóa") { _, _ -> video.stopPlayback(); f.delete(); sel = null; refresh() }
+            .setNegativeButton("Hủy", null).show()
     }
 
     private fun export(f: File) {

@@ -2,14 +2,18 @@ package com.example.dashcam
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Context
 import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -24,12 +28,13 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.text.InputType
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -60,13 +65,102 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
+
+/** Nút tròn có ký hiệu vẽ bằng code (không cần file ảnh). */
+class IconButton(ctx: Context, private val type: String) : View(ctx) {
+    var ring = 0            // màu viền, 0 = không viền
+        set(v) { field = v; invalidate() }
+    var active = false      // rec: đang ghi, lock: đang khóa
+        set(v) { field = v; invalidate() }
+    var label = ""          // chữ cho nút chất lượng
+        set(v) { field = v; invalidate() }
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC1E1E1E.toInt() }
+    private val fg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val red = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE53935.toInt() }
+
+    init { isClickable = true; isFocusable = true }
+
+    override fun drawableStateChanged() {
+        super.drawableStateChanged()
+        alpha = if (!isEnabled) 0.35f else if (isPressed) 0.6f else 1f
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val cx = w / 2f; val cy = height / 2f; val u = w / 100f
+        c.drawCircle(cx, cy, cx - 1f, bg)
+        fg.strokeWidth = 5f * u
+        val rc = if (type == "rec") Color.WHITE else ring
+        if (rc != 0) { fg.color = rc; c.drawCircle(cx, cy, cx - 3f * u, fg) }
+        fg.color = Color.WHITE
+        when (type) {
+            "rec" -> if (active) c.drawRoundRect(cx - 18 * u, cy - 18 * u, cx + 18 * u, cy + 18 * u, 4 * u, 4 * u, fill)
+                     else c.drawCircle(cx, cy, 26 * u, red)
+            "cam" -> {
+                c.drawRoundRect(cx - 26 * u, cy - 14 * u, cx + 26 * u, cy + 20 * u, 6 * u, 6 * u, fg)
+                c.drawLine(cx - 10 * u, cy - 14 * u, cx - 6 * u, cy - 21 * u, fg)
+                c.drawLine(cx - 6 * u, cy - 21 * u, cx + 6 * u, cy - 21 * u, fg)
+                c.drawLine(cx + 6 * u, cy - 21 * u, cx + 10 * u, cy - 14 * u, fg)
+                c.drawCircle(cx, cy + 3 * u, 9 * u, fg)
+            }
+            "dim" -> {
+                val p = Path().apply { addCircle(cx, cy, 22 * u, Path.Direction.CW) }
+                p.op(Path().apply { addCircle(cx + 11 * u, cy - 8 * u, 19 * u, Path.Direction.CW) }, Path.Op.DIFFERENCE)
+                c.drawPath(p, fill)
+            }
+            "gal" -> {
+                c.drawRoundRect(cx - 26 * u, cy - 20 * u, cx + 26 * u, cy + 20 * u, 6 * u, 6 * u, fg)
+                c.drawPath(Path().apply { moveTo(cx - 6 * u, cy - 10 * u); lineTo(cx - 6 * u, cy + 10 * u); lineTo(cx + 12 * u, cy); close() }, fill)
+            }
+            "pip" -> {
+                c.drawRoundRect(cx - 26 * u, cy - 20 * u, cx + 26 * u, cy + 20 * u, 4 * u, 4 * u, fg)
+                c.drawRect(cx + 2 * u, cy, cx + 20 * u, cy + 13 * u, fill)
+            }
+            "set" -> {
+                c.drawCircle(cx, cy, 15 * u, fg)
+                c.drawCircle(cx, cy, 6 * u, fg)
+                for (i in 0 until 8) {
+                    val a = Math.toRadians(i * 45.0)
+                    c.drawLine(cx + (15 * u * cos(a)).toFloat(), cy + (15 * u * sin(a)).toFloat(),
+                        cx + (25 * u * cos(a)).toFloat(), cy + (25 * u * sin(a)).toFloat(), fg)
+                }
+            }
+            "qual" -> {
+                fill.textAlign = Paint.Align.CENTER; fill.typeface = Typeface.DEFAULT_BOLD
+                fill.textSize = (if (label.length > 4) 24 else 30) * u
+                c.drawText(label, cx, cy + 10 * u, fill)
+            }
+            "lock" -> {
+                c.drawRoundRect(cx - 18 * u, cy - 4 * u, cx + 18 * u, cy + 20 * u, 4 * u, 4 * u, fill)
+                c.drawArc(RectF(cx - 11 * u, cy - 22 * u, cx + 11 * u, cy + 8 * u), 180f, 180f, false, fg)
+                c.drawLine(cx + 11 * u, cy - 7 * u, cx + 11 * u, cy - 4 * u, fg)
+                if (active) c.drawLine(cx - 11 * u, cy - 7 * u, cx - 11 * u, cy - 4 * u, fg)
+            }
+            "save" -> {
+                c.drawLine(cx, cy - 22 * u, cx, cy + 6 * u, fg)
+                c.drawLine(cx - 12 * u, cy - 6 * u, cx, cy + 6 * u, fg)
+                c.drawLine(cx + 12 * u, cy - 6 * u, cx, cy + 6 * u, fg)
+                c.drawLine(cx - 20 * u, cy + 20 * u, cx + 20 * u, cy + 20 * u, fg)
+            }
+            "del" -> {
+                c.drawLine(cx - 20 * u, cy - 12 * u, cx + 20 * u, cy - 12 * u, fg)
+                c.drawLine(cx - 7 * u, cy - 12 * u, cx - 7 * u, cy - 19 * u, fg)
+                c.drawLine(cx - 7 * u, cy - 19 * u, cx + 7 * u, cy - 19 * u, fg)
+                c.drawLine(cx + 7 * u, cy - 19 * u, cx + 7 * u, cy - 12 * u, fg)
+                c.drawRoundRect(cx - 14 * u, cy - 12 * u, cx + 14 * u, cy + 22 * u, 3 * u, 3 * u, fg)
+                c.drawLine(cx - 5 * u, cy - 4 * u, cx - 5 * u, cy + 14 * u, fg)
+                c.drawLine(cx + 5 * u, cy - 4 * u, cx + 5 * u, cy + 14 * u, fg)
+            }
+        }
+    }
+}
 
 class MainActivity : AppCompatActivity() {
     private val segMs get() = longArrayOf(1, 3, 5)[prefs.getInt("seg", 1)] * 60_000L   // độ dài mỗi đoạn
-    private val keep get() = intArrayOf(5, 10, 20, 40)[prefs.getInt("keep", 1)]        // số đoạn thường giữ lại mỗi camera
-    private val keepLocked = 30           // số đoạn đã khóa giữ lại cho mỗi camera
     private val impactMs2 = 15f           // ngưỡng va chạm (m/s2 lệch khỏi trọng lực); tăng nếu bị khóa nhầm khi đường xóc
 
     private val h = Handler(Looper.getMainLooper())
@@ -77,20 +171,27 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pvFront: PreviewView
     private lateinit var tvHud: TextView
     private lateinit var barView: LinearLayout
-    private lateinit var bRec: Button
-    private lateinit var bMode: Button
-    private lateinit var bDim: Button
+    private lateinit var bQual: IconButton
+    private lateinit var bRec: IconButton
+    private lateinit var capRec: TextView
+    private lateinit var bMode: IconButton
+    private lateinit var capMode: TextView
+    private lateinit var bDim: IconButton
     private var vcs = listOf<Pair<String, VideoCapture<Recorder>>>()
     private val cur = mutableMapOf<String, Recording>()
     private val locked = mutableSetOf<String>()
     private var running = false
     private var dim = false
-    private val modes = arrayOf("Camera sau", "Camera trước", "Cả hai (2 file)")
+    private var qLabel = "720p"
+    private var qBps = 2_500_000
+    private val modes = arrayOf("Camera sau", "Camera trước", "Cả hai cam")
 
     @Volatile private var speedKmh = 0f
     @Volatile private var lat = Double.NaN
     @Volatile private var lon = Double.NaN
     @Volatile private var lastFix = 0L
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -184,28 +285,112 @@ class MainActivity : AppCompatActivity() {
         row.addView(pvFront, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         root.addView(row)
         tvHud = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f; setShadowLayer(4f, 0f, 1f, Color.BLACK); setPadding(24, 16, 24, 16) }
-        root.addView(tvHud, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
-        val bar = LinearLayout(this).apply { setBackgroundColor(0x99000000.toInt()); gravity = Gravity.CENTER }.also { barView = it }
-        fun btn(onClick: () -> Unit) = Button(this).apply {
-            setOnClickListener { onClick() }
-            bar.addView(this, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(tvHud, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START))
+
+        // Nút tròn nhỏ chỉnh nhanh chất lượng
+        bQual = IconButton(this, "qual").apply { contentDescription = "Chất lượng ghi hình"; setOnClickListener { cycleQuality() } }
+        root.addView(bQual, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { setMargins(dp(12), dp(12), dp(12), dp(12)) })
+
+        barView = LinearLayout(this).apply { setBackgroundColor(0x66000000); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(6)) }
+        fun item(type: String, caption: String, size: Int, click: () -> Unit): Pair<IconButton, TextView> {
+            val b = IconButton(this, type).apply { contentDescription = caption; setOnClickListener { click() } }
+            val t = TextView(this).apply { text = caption; setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER; setShadowLayer(3f, 0f, 1f, Color.BLACK) }
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+                addView(b, LinearLayout.LayoutParams(dp(size), dp(size)))
+                addView(t)
+            }
+            barView.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            return b to t
         }
-        bMode = btn {
-            if (running) stopAll()
-            prefs.edit().putInt("mode", (prefs.getInt("mode", 0) + 1) % 3).apply(); bind()
-        }
-        bRec = btn { if (running) stopAll() else startAll() }
-        bDim = btn {
+        item("cam", "Camera", 52) { applyChange { prefs.edit().putInt("mode", (prefs.getInt("mode", 0) + 1) % 3).apply() } }
+            .let { bMode = it.first; capMode = it.second }
+        item("rec", "Ghi", 68) { if (running) stopAll() else startAll() }
+            .let { bRec = it.first; capRec = it.second }
+        item("dim", "Tối màn hình", 52) {
             dim = !dim
             window.attributes = window.attributes.also { it.screenBrightness = if (dim) 0.01f else -1f }
             ui()
-        }
-        btn { if (running) stopAll(); startActivity(android.content.Intent(this, GalleryActivity::class.java)) }.text = "Thư viện"
-        btn { enterPip() }.text = "Thu nhỏ"
-        btn { showSettings() }.text = "Cài đặt"
-        root.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        }.let { bDim = it.first }
+        item("gal", "Thư viện", 52) { if (running) stopAll(); startActivity(Intent(this, GalleryActivity::class.java)) }
+        item("pip", "Thu nhỏ", 52) { enterPip() }
+        item("set", "Cài đặt", 52) { showSettings() }
+        root.addView(barView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(root)
         ui()
+    }
+
+    private fun ui() {
+        bRec.active = running
+        capRec.text = if (running) "Dừng" else "Ghi"
+        capMode.text = modes[prefs.getInt("mode", 0)]
+        bDim.ring = if (dim) 0xFFFFB300.toInt() else 0
+        bQual.label = qLabel
+        bQual.ring = intArrayOf(0xFF66BB6A.toInt(), 0xFFFFB300.toInt(), 0xFFE53935.toInt())[prefs.getInt("q", 1)]
+    }
+
+    /* Mọi thay đổi cấu hình: dừng ghi, áp dụng, rồi ghi tiếp bằng video mới */
+    private fun applyChange(after: (() -> Unit)? = null, change: () -> Unit) {
+        val was = running
+        if (was) stopAll()
+        change()
+        val go = Runnable { bind(); if (was) startAll(); after?.invoke() }
+        if (was) h.postDelayed(go, 900) else go.run()
+    }
+
+    private fun cycle(k: String, n: Int, def: Int) = prefs.edit().putInt(k, (prefs.getInt(k, def) + 1) % n).apply()
+    private fun toggle(k: String) = prefs.edit().putBoolean(k, !prefs.getBoolean(k, false)).apply()
+
+    private fun cycleQuality() {
+        applyChange(after = {
+            Toast.makeText(this, "$qLabel, khoảng ${(qBps * 7.5 / 1_000_000).roundToInt()} MB mỗi phút cho mỗi camera", Toast.LENGTH_LONG).show()
+        }) { cycle("q", 3, 1) }
+    }
+
+    /* ---------- Cài đặt và dung lượng ---------- */
+    private fun capGb() = prefs.getFloat("capGb", 5f)
+    private fun fmtGb(f: Float) = if (f == f.toInt().toFloat()) f.toInt().toString() else "%.1f".format(Locale.US, f)
+
+    private fun usageText(): String {
+        val fs = dir().listFiles { x -> x.extension == "mp4" }?.toList() ?: emptyList()
+        val lk = fs.filter { it.name.startsWith("LOCK_") }.sumOf { it.length() }
+        val un = fs.sumOf { it.length() } - lk
+        fun g(b: Long) = "%.2f GB".format(Locale.US, b / 1073741824.0)
+        return "Đang dùng: ${g(un)} (chưa khóa), ${g(lk)} (đã khóa). Còn trống trên máy: ${g(dir().usableSpace)}."
+    }
+
+    private fun showSettings() {
+        val segs = intArrayOf(1, 3, 5)
+        fun onOff(k: String) = if (prefs.getBoolean(k, false)) "bật" else "tắt"
+        val c = capGb()
+        val items = arrayOf(
+            "Dung lượng tối đa: " + if (c <= 0f) "không giới hạn" else fmtGb(c) + " GB",
+            "Độ dài mỗi đoạn: " + segs[prefs.getInt("seg", 1)] + " phút",
+            "Lật ngang: " + onOff("fh"),
+            "Lật dọc: " + onOff("fv"))
+        AlertDialog.Builder(this).setTitle("Cài đặt").setItems(items) { _, w ->
+            when (w) {
+                0 -> askCap()
+                1 -> { cycle("seg", segs.size, 1); showSettings() }
+                2 -> { applyChange { toggle("fh") }; showSettings() }
+                3 -> { applyChange { toggle("fv") }; showSettings() }
+            }
+        }.setPositiveButton("Đóng", null).show()
+    }
+
+    private fun askCap() {
+        val et = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(fmtGb(capGb())); selectAll()
+        }
+        AlertDialog.Builder(this).setTitle("Dung lượng tối đa (GB)")
+            .setMessage("Chỉ tính video chưa khóa. Video đã khóa nằm ngoài mức này và không bị tự xóa. Nhập 0 để không giới hạn.\n\n" + usageText())
+            .setView(et)
+            .setPositiveButton("Lưu") { _, _ ->
+                et.text.toString().replace(',', '.').toFloatOrNull()?.let { prefs.edit().putFloat("capGb", it.coerceAtLeast(0f)).apply() }
+                showSettings()
+            }
+            .setNegativeButton("Hủy") { _, _ -> showSettings() }.show()
     }
 
     /* ---------- Thu nhỏ thành cửa sổ nổi để xem Maps, vẫn ghi bình thường ---------- */
@@ -225,53 +410,29 @@ class MainActivity : AppCompatActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         val v = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
-        barView.visibility = v; tvHud.visibility = v
-    }
-
-    private fun cycle(k: String, n: Int, def: Int) = prefs.edit().putInt(k, (prefs.getInt(k, def) + 1) % n).apply()
-
-    private fun showSettings() {
-        val q = arrayOf("Tiết kiệm (480p)", "Cân bằng (720p)", "Cao (1080p)")
-        val caps = intArrayOf(0, 2, 5, 10, 20)
-        val segs = intArrayOf(1, 3, 5)
-        val keeps = intArrayOf(5, 10, 20, 40)
-        fun onOff(k: String) = if (prefs.getBoolean(k, false)) "bật" else "tắt"
-        val c = caps[prefs.getInt("cap", 2)]
-        val items = arrayOf(
-            "Chất lượng: " + q[prefs.getInt("q", 1)],
-            "Dung lượng tối đa: " + if (c == 0) "không giới hạn" else "$c GB",
-            "Độ dài mỗi đoạn: " + segs[prefs.getInt("seg", 1)] + " phút",
-            "Số đoạn giữ lại mỗi camera: " + keeps[prefs.getInt("keep", 1)],
-            "Lật ngang: " + onOff("fh"),
-            "Lật dọc: " + onOff("fv"))
-        AlertDialog.Builder(this).setTitle("Cài đặt").setItems(items) { _, w ->
-            when (w) {
-                0 -> { cycle("q", 3, 1); if (running) stopAll(); bind() }
-                1 -> cycle("cap", caps.size, 2)
-                2 -> cycle("seg", segs.size, 1)
-                3 -> cycle("keep", keeps.size, 1)
-                4 -> flip("fh")
-                5 -> flip("fv")
-            }
-            showSettings()
-        }.setPositiveButton("Đóng", null).show()
-    }
-
-    private fun flip(k: String) {
-        if (running) stopAll()
-        prefs.edit().putBoolean(k, !prefs.getBoolean(k, false)).apply(); bind()
-    }
-
-    private fun ui() {
-        bRec.text = if (running) "Dừng" else "Ghi"
-        bMode.text = modes[prefs.getInt("mode", 0)]
-        bDim.text = if (dim) "Sáng màn hình" else "Tối màn hình"
+        barView.visibility = v; tvHud.visibility = v; bQual.visibility = v
     }
 
     /* ---------- Camera ---------- */
     private fun initCamera() {
         val f = ProcessCameraProvider.getInstance(this)
         f.addListener({ provider = f.get(); bind() }, ContextCompat.getMainExecutor(this))
+    }
+
+    /** Chọn độ phân giải thật theo khả năng của từng camera. lv: 0 thấp, 1 vừa, 2 cao. */
+    private fun cfg(sel: CameraSelector, lv: Int, dual: Boolean): Triple<Quality, String, Int> {
+        val info = sel.filter(provider.availableCameraInfos).first()
+        val sup = QualitySelector.getSupportedQualities(info)
+        var order = listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD).filter { it in sup }
+        if (dual) order = order.filter { it == Quality.HD || it == Quality.SD }.ifEmpty { order.takeLast(1) }
+        if (order.isEmpty()) return Triple(Quality.LOWEST, "?", 2_000_000)
+        val q = when (lv) { 0 -> order.last(); 2 -> order.first(); else -> order.firstOrNull { it == Quality.HD } ?: order.last() }
+        val size = QualitySelector.getResolution(info, q)
+        val px = (size?.width ?: 1280) * (size?.height ?: 720)
+        val k = when (lv) { 0 -> 0.07; 2 -> 0.08; else -> 0.09 }
+        val bps = (px * 30 * k).toInt().coerceIn(800_000, 30_000_000)
+        val name = when (q) { Quality.UHD -> "4K"; Quality.FHD -> "1080p"; Quality.HD -> "720p"; else -> "480p" }
+        return Triple(q, name, bps)
     }
 
     @Suppress("DEPRECATION")
@@ -295,9 +456,8 @@ class MainActivity : AppCompatActivity() {
         val front = CameraSelector.DEFAULT_FRONT_CAMERA
 
         fun make(pv: PreviewView, sel: CameraSelector, fx: Boolean): Pair<UseCaseGroup, VideoCapture<Recorder>> {
-            var lv = prefs.getInt("q", 1)
-            if (mode == 2) lv = minOf(lv, 1)   // chế độ 2 camera giới hạn tối đa 720p
-            val (qual, bps) = when (lv) { 0 -> Quality.SD to 1_200_000; 2 -> Quality.FHD to 6_000_000; else -> Quality.HD to 2_500_000 }
+            val (qual, name, bps) = cfg(sel, prefs.getInt("q", 1), mode == 2)
+            qLabel = name; qBps = bps
             val rec = Recorder.Builder().setQualitySelector(
                 QualitySelector.from(qual, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
                 .setTargetVideoEncodingBitRate(bps).build()
@@ -353,7 +513,7 @@ class MainActivity : AppCompatActivity() {
             .start(ContextCompat.getMainExecutor(this)) { e ->
                 if (e is VideoRecordEvent.Finalize) {
                     if (locked.remove(tag)) f.renameTo(File(dir(), "LOCK_" + f.name))
-                    prune(tag)
+                    prune()
                     if (e.hasError()) { if (running) { stopAll(); Toast.makeText(this, "Dừng ghi do lỗi (${e.error})", Toast.LENGTH_LONG).show() } }
                     else if (running) startRec(vc, tag)
                 }
@@ -364,19 +524,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun dir(): File = getExternalFilesDir(Environment.DIRECTORY_MOVIES)!!
 
-    private fun prune(tag: String) {
-        val mine = dir().listFiles { x -> x.name.startsWith(tag + "_") }?.sortedBy { it.lastModified() } ?: return
-        mine.dropLast(keep).forEach { it.delete() }
-        dir().listFiles { x -> x.name.startsWith("LOCK_" + tag + "_") }?.sortedBy { it.lastModified() }
-            ?.dropLast(keepLocked)?.forEach { it.delete() }
-        if (dir().usableSpace < 500L shl 20) mine.firstOrNull()?.delete()   // sắp đầy bộ nhớ
-        val capGb = intArrayOf(0, 2, 5, 10, 20)[prefs.getInt("cap", 2)]
-        if (capGb > 0) {
-            val now = System.currentTimeMillis()
-            var total = dir().listFiles()?.sumOf { it.length() } ?: 0L
-            val old = dir().listFiles { x -> !x.name.startsWith("LOCK_") && now - x.lastModified() > 15_000 }?.sortedBy { it.lastModified() } ?: emptyList()
-            for (x in old) { if (total <= capGb * 1073741824L) break; total -= x.length(); x.delete() }
-        }
+    /** Xóa video chưa khóa cũ nhất khi vượt dung lượng tối đa. Video đã khóa (LOCK_) không bao giờ bị tự xóa. */
+    private fun prune() {
+        val now = System.currentTimeMillis()
+        val all = dir().listFiles { x -> x.extension == "mp4" && !x.name.startsWith("LOCK_") } ?: return
+        var total = all.sumOf { it.length() }
+        val old = all.filter { now - it.lastModified() > 15_000 }.sortedBy { it.lastModified() }.toMutableList()
+        val cap = (capGb() * 1073741824.0).toLong()
+        if (cap > 0) while (total > cap && old.isNotEmpty()) { val x = old.removeAt(0); total -= x.length(); x.delete() }
+        while (dir().usableSpace < 500L shl 20 && old.isNotEmpty()) old.removeAt(0).delete()   // sắp đầy bộ nhớ máy
     }
 
     override fun onDestroy() {

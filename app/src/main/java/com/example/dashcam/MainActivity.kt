@@ -35,6 +35,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
@@ -63,8 +64,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity() {
-    private val segMs = 3 * 60_000L       // độ dài mỗi đoạn
-    private val keep = 10                 // số đoạn thường giữ lại cho mỗi camera
+    private val segMs get() = longArrayOf(1, 3, 5)[prefs.getInt("seg", 1)] * 60_000L   // độ dài mỗi đoạn
+    private val keep get() = intArrayOf(5, 10, 20, 40)[prefs.getInt("keep", 1)]        // số đoạn thường giữ lại mỗi camera
     private val keepLocked = 30           // số đoạn đã khóa giữ lại cho mỗi camera
     private val impactMs2 = 15f           // ngưỡng va chạm (m/s2 lệch khỏi trọng lực); tăng nếu bị khóa nhầm khi đường xóc
 
@@ -78,8 +79,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var barView: LinearLayout
     private lateinit var bRec: Button
     private lateinit var bMode: Button
-    private lateinit var bH: Button
-    private lateinit var bV: Button
     private lateinit var bDim: Button
     private var vcs = listOf<Pair<String, VideoCapture<Recorder>>>()
     private val cur = mutableMapOf<String, Recording>()
@@ -195,8 +194,6 @@ class MainActivity : AppCompatActivity() {
             if (running) stopAll()
             prefs.edit().putInt("mode", (prefs.getInt("mode", 0) + 1) % 3).apply(); bind()
         }
-        bH = btn { flip("fh") }
-        bV = btn { flip("fv") }
         bRec = btn { if (running) stopAll() else startAll() }
         bDim = btn {
             dim = !dim
@@ -205,6 +202,7 @@ class MainActivity : AppCompatActivity() {
         }
         btn { if (running) stopAll(); startActivity(android.content.Intent(this, GalleryActivity::class.java)) }.text = "Thư viện"
         btn { enterPip() }.text = "Thu nhỏ"
+        btn { showSettings() }.text = "Cài đặt"
         root.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(root)
         ui()
@@ -230,6 +228,35 @@ class MainActivity : AppCompatActivity() {
         barView.visibility = v; tvHud.visibility = v
     }
 
+    private fun cycle(k: String, n: Int, def: Int) = prefs.edit().putInt(k, (prefs.getInt(k, def) + 1) % n).apply()
+
+    private fun showSettings() {
+        val q = arrayOf("Tiết kiệm (480p)", "Cân bằng (720p)", "Cao (1080p)")
+        val caps = intArrayOf(0, 2, 5, 10, 20)
+        val segs = intArrayOf(1, 3, 5)
+        val keeps = intArrayOf(5, 10, 20, 40)
+        fun onOff(k: String) = if (prefs.getBoolean(k, false)) "bật" else "tắt"
+        val c = caps[prefs.getInt("cap", 2)]
+        val items = arrayOf(
+            "Chất lượng: " + q[prefs.getInt("q", 1)],
+            "Dung lượng tối đa: " + if (c == 0) "không giới hạn" else "$c GB",
+            "Độ dài mỗi đoạn: " + segs[prefs.getInt("seg", 1)] + " phút",
+            "Số đoạn giữ lại mỗi camera: " + keeps[prefs.getInt("keep", 1)],
+            "Lật ngang: " + onOff("fh"),
+            "Lật dọc: " + onOff("fv"))
+        AlertDialog.Builder(this).setTitle("Cài đặt").setItems(items) { _, w ->
+            when (w) {
+                0 -> { cycle("q", 3, 1); if (running) stopAll(); bind() }
+                1 -> cycle("cap", caps.size, 2)
+                2 -> cycle("seg", segs.size, 1)
+                3 -> cycle("keep", keeps.size, 1)
+                4 -> flip("fh")
+                5 -> flip("fv")
+            }
+            showSettings()
+        }.setPositiveButton("Đóng", null).show()
+    }
+
     private fun flip(k: String) {
         if (running) stopAll()
         prefs.edit().putBoolean(k, !prefs.getBoolean(k, false)).apply(); bind()
@@ -238,8 +265,6 @@ class MainActivity : AppCompatActivity() {
     private fun ui() {
         bRec.text = if (running) "Dừng" else "Ghi"
         bMode.text = modes[prefs.getInt("mode", 0)]
-        bH.text = "Lật ngang: " + if (prefs.getBoolean("fh", false)) "bật" else "tắt"
-        bV.text = "Lật dọc: " + if (prefs.getBoolean("fv", false)) "bật" else "tắt"
         bDim.text = if (dim) "Sáng màn hình" else "Tối màn hình"
     }
 
@@ -270,8 +295,12 @@ class MainActivity : AppCompatActivity() {
         val front = CameraSelector.DEFAULT_FRONT_CAMERA
 
         fun make(pv: PreviewView, sel: CameraSelector, fx: Boolean): Pair<UseCaseGroup, VideoCapture<Recorder>> {
+            var lv = prefs.getInt("q", 1)
+            if (mode == 2) lv = minOf(lv, 1)   // chế độ 2 camera giới hạn tối đa 720p
+            val (qual, bps) = when (lv) { 0 -> Quality.SD to 1_200_000; 2 -> Quality.FHD to 6_000_000; else -> Quality.HD to 2_500_000 }
             val rec = Recorder.Builder().setQualitySelector(
-                QualitySelector.from(Quality.HD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))).build()
+                QualitySelector.from(qual, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+                .setTargetVideoEncodingBitRate(bps).build()
             val vc = VideoCapture.Builder(rec)
                 .setMirrorMode(if (mirror) MirrorMode.MIRROR_MODE_ON else MirrorMode.MIRROR_MODE_OFF)
                 .setTargetRotation(rot).build()
@@ -341,6 +370,13 @@ class MainActivity : AppCompatActivity() {
         dir().listFiles { x -> x.name.startsWith("LOCK_" + tag + "_") }?.sortedBy { it.lastModified() }
             ?.dropLast(keepLocked)?.forEach { it.delete() }
         if (dir().usableSpace < 500L shl 20) mine.firstOrNull()?.delete()   // sắp đầy bộ nhớ
+        val capGb = intArrayOf(0, 2, 5, 10, 20)[prefs.getInt("cap", 2)]
+        if (capGb > 0) {
+            val now = System.currentTimeMillis()
+            var total = dir().listFiles()?.sumOf { it.length() } ?: 0L
+            val old = dir().listFiles { x -> !x.name.startsWith("LOCK_") && now - x.lastModified() > 15_000 }?.sortedBy { it.lastModified() } ?: emptyList()
+            for (x in old) { if (total <= capGb * 1073741824L) break; total -= x.length(); x.delete() }
+        }
     }
 
     override fun onDestroy() {
